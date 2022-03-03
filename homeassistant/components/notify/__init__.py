@@ -1,143 +1,65 @@
-"""
-Provides functionality to notify people.
-
-For more details about this component, please refer to the documentation at
-https://home-assistant.io/components/notify/
-"""
-import logging
-import os
-from functools import partial
+"""Provides functionality to notify people."""
+from __future__ import annotations
 
 import voluptuous as vol
 
-import homeassistant.bootstrap as bootstrap
-import homeassistant.helpers.config_validation as cv
-from homeassistant.config import load_yaml_config_file
+import homeassistant.components.persistent_notification as pn
 from homeassistant.const import CONF_NAME, CONF_PLATFORM
-from homeassistant.helpers import config_per_platform
-from homeassistant.util import slugify
+from homeassistant.core import HomeAssistant, ServiceCall
+import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.typing import ConfigType
 
-_LOGGER = logging.getLogger(__name__)
+from .const import (  # noqa: F401
+    ATTR_DATA,
+    ATTR_MESSAGE,
+    ATTR_TARGET,
+    ATTR_TITLE,
+    DOMAIN,
+    NOTIFY_SERVICE_SCHEMA,
+    PERSISTENT_NOTIFICATION_SERVICE_SCHEMA,
+    SERVICE_NOTIFY,
+    SERVICE_PERSISTENT_NOTIFICATION,
+)
+from .legacy import (  # noqa: F401
+    BaseNotificationService,
+    async_reload,
+    async_reset_platform,
+    async_setup_legacy,
+    check_templates_warn,
+)
 
 # Platform specific data
-ATTR_DATA = 'data'
-
-# Text to notify user of
-ATTR_MESSAGE = 'message'
-
-# Target of the notification (user, device, etc)
-ATTR_TARGET = 'target'
-
-# Title of notification
-ATTR_TITLE = 'title'
 ATTR_TITLE_DEFAULT = "Home Assistant"
 
-DOMAIN = 'notify'
-
-SERVICE_NOTIFY = 'notify'
-
-PLATFORM_SCHEMA = vol.Schema({
-    vol.Required(CONF_PLATFORM): cv.string,
-    vol.Optional(CONF_NAME): cv.string,
-}, extra=vol.ALLOW_EXTRA)
-
-NOTIFY_SERVICE_SCHEMA = vol.Schema({
-    vol.Required(ATTR_MESSAGE): cv.template,
-    vol.Optional(ATTR_TITLE): cv.template,
-    vol.Optional(ATTR_TARGET): vol.All(cv.ensure_list, [cv.string]),
-    vol.Optional(ATTR_DATA): dict,
-})
+PLATFORM_SCHEMA = vol.Schema(
+    {vol.Required(CONF_PLATFORM): cv.string, vol.Optional(CONF_NAME): cv.string},
+    extra=vol.ALLOW_EXTRA,
+)
 
 
-def send_message(hass, message, title=None, data=None):
-    """Send a notification message."""
-    info = {
-        ATTR_MESSAGE: message
-    }
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Set up the notify services."""
+    await async_setup_legacy(hass, config)
 
-    if title is not None:
-        info[ATTR_TITLE] = title
+    async def persistent_notification(service: ServiceCall) -> None:
+        """Send notification via the built-in persistsent_notify integration."""
+        message = service.data[ATTR_MESSAGE]
+        message.hass = hass
+        check_templates_warn(hass, message)
 
-    if data is not None:
-        info[ATTR_DATA] = data
+        title = None
+        if title_tpl := service.data.get(ATTR_TITLE):
+            check_templates_warn(hass, title_tpl)
+            title_tpl.hass = hass
+            title = title_tpl.async_render(parse_result=False)
 
-    hass.services.call(DOMAIN, SERVICE_NOTIFY, info)
+        pn.async_create(hass, message.async_render(parse_result=False), title)
 
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PERSISTENT_NOTIFICATION,
+        persistent_notification,
+        schema=PERSISTENT_NOTIFICATION_SERVICE_SCHEMA,
+    )
 
-def setup(hass, config):
-    """Setup the notify services."""
-    success = False
-
-    descriptions = load_yaml_config_file(
-        os.path.join(os.path.dirname(__file__), 'services.yaml'))
-
-    targets = {}
-
-    for platform, p_config in config_per_platform(config, DOMAIN):
-        notify_implementation = bootstrap.prepare_setup_platform(
-            hass, config, DOMAIN, platform)
-
-        if notify_implementation is None:
-            _LOGGER.error("Unknown notification service specified")
-            continue
-
-        notify_service = notify_implementation.get_service(hass, p_config)
-
-        if notify_service is None:
-            _LOGGER.error("Failed to initialize notification service %s",
-                          platform)
-            continue
-
-        def notify_message(notify_service, call):
-            """Handle sending notification message service calls."""
-            kwargs = {}
-            message = call.data[ATTR_MESSAGE]
-            title = call.data.get(ATTR_TITLE)
-
-            if title:
-                title.hass = hass
-                kwargs[ATTR_TITLE] = title.render()
-
-            if targets.get(call.service) is not None:
-                kwargs[ATTR_TARGET] = [targets[call.service]]
-            elif call.data.get(ATTR_TARGET) is not None:
-                kwargs[ATTR_TARGET] = call.data.get(ATTR_TARGET)
-
-            message.hass = hass
-            kwargs[ATTR_MESSAGE] = message.render()
-            kwargs[ATTR_DATA] = call.data.get(ATTR_DATA)
-
-            notify_service.send_message(**kwargs)
-
-        service_call_handler = partial(notify_message, notify_service)
-
-        if hasattr(notify_service, 'targets'):
-            platform_name = (p_config.get(CONF_NAME) or platform)
-            for name, target in notify_service.targets.items():
-                target_name = slugify('{}_{}'.format(platform_name, name))
-                targets[target_name] = target
-                hass.services.register(DOMAIN, target_name,
-                                       service_call_handler,
-                                       descriptions.get(SERVICE_NOTIFY),
-                                       schema=NOTIFY_SERVICE_SCHEMA)
-
-        platform_name = (p_config.get(CONF_NAME) or SERVICE_NOTIFY)
-        platform_name_slug = slugify(platform_name)
-
-        hass.services.register(
-            DOMAIN, platform_name_slug, service_call_handler,
-            descriptions.get(SERVICE_NOTIFY), schema=NOTIFY_SERVICE_SCHEMA)
-        success = True
-
-    return success
-
-
-class BaseNotificationService(object):
-    """An abstract class for notification services."""
-
-    def send_message(self, message, **kwargs):
-        """Send a message.
-
-        kwargs can contain ATTR_TITLE to specify a title.
-        """
-        raise NotImplementedError
+    return True

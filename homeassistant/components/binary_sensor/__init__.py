@@ -1,80 +1,211 @@
-"""
-Component to interface with binary sensors.
+"""Component to interface with binary sensors."""
+from __future__ import annotations
 
-For more details about this component, please refer to the documentation at
-https://home-assistant.io/components/binary_sensor/
-"""
-import asyncio
+from dataclasses import dataclass
+from datetime import timedelta
 import logging
+from typing import Literal, final
 
 import voluptuous as vol
 
+from homeassistant.backports.enum import StrEnum
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.config_validation import (  # noqa: F401
+    PLATFORM_SCHEMA,
+    PLATFORM_SCHEMA_BASE,
+)
+from homeassistant.helpers.entity import Entity, EntityDescription
 from homeassistant.helpers.entity_component import EntityComponent
-from homeassistant.helpers.entity import Entity
-from homeassistant.const import (STATE_ON, STATE_OFF)
-from homeassistant.helpers.config_validation import PLATFORM_SCHEMA  # noqa
+from homeassistant.helpers.typing import ConfigType
 
-DOMAIN = 'binary_sensor'
-SCAN_INTERVAL = 30
+_LOGGER = logging.getLogger(__name__)
 
-ENTITY_ID_FORMAT = DOMAIN + '.{}'
-SENSOR_CLASSES = [
-    None,            # Generic on/off
-    'cold',          # On means cold (or too cold)
-    'connectivity',  # On means connection present, Off = no connection
-    'gas',           # CO, CO2, etc.
-    'heat',          # On means hot (or too hot)
-    'light',         # Lightness threshold
-    'moisture',      # Specifically a wetness sensor
-    'motion',        # Motion sensor
-    'moving',        # On means moving, Off means stopped
-    'occupancy',     # On means occupied, Off means not occupied
-    'opening',       # Door, window, etc.
-    'power',         # Power, over-current, etc
-    'safety',        # Generic on=unsafe, off=safe
-    'smoke',         # Smoke detector
-    'sound',         # On means sound detected, Off means no sound
-    'vibration',     # On means vibration detected, Off means no vibration
-]
+DOMAIN = "binary_sensor"
+SCAN_INTERVAL = timedelta(seconds=30)
 
-SENSOR_CLASSES_SCHEMA = vol.All(vol.Lower, vol.In(SENSOR_CLASSES))
+ENTITY_ID_FORMAT = DOMAIN + ".{}"
 
 
-@asyncio.coroutine
-def async_setup(hass, config):
+class BinarySensorDeviceClass(StrEnum):
+    """Device class for binary sensors."""
+
+    # On means low, Off means normal
+    BATTERY = "battery"
+
+    # On means charging, Off means not charging
+    BATTERY_CHARGING = "battery_charging"
+
+    # On means carbon monoxide detected, Off means no carbon monoxide (clear)
+    CO = "carbon_monoxide"
+
+    # On means cold, Off means normal
+    COLD = "cold"
+
+    # On means connected, Off means disconnected
+    CONNECTIVITY = "connectivity"
+
+    # On means open, Off means closed
+    DOOR = "door"
+
+    # On means open, Off means closed
+    GARAGE_DOOR = "garage_door"
+
+    # On means gas detected, Off means no gas (clear)
+    GAS = "gas"
+
+    # On means hot, Off means normal
+    HEAT = "heat"
+
+    # On means light detected, Off means no light
+    LIGHT = "light"
+
+    # On means open (unlocked), Off means closed (locked)
+    LOCK = "lock"
+
+    # On means wet, Off means dry
+    MOISTURE = "moisture"
+
+    # On means motion detected, Off means no motion (clear)
+    MOTION = "motion"
+
+    # On means moving, Off means not moving (stopped)
+    MOVING = "moving"
+
+    # On means occupied, Off means not occupied (clear)
+    OCCUPANCY = "occupancy"
+
+    # On means open, Off means closed
+    OPENING = "opening"
+
+    # On means plugged in, Off means unplugged
+    PLUG = "plug"
+
+    # On means power detected, Off means no power
+    POWER = "power"
+
+    # On means home, Off means away
+    PRESENCE = "presence"
+
+    # On means problem detected, Off means no problem (OK)
+    PROBLEM = "problem"
+
+    # On means running, Off means not running
+    RUNNING = "running"
+
+    # On means unsafe, Off means safe
+    SAFETY = "safety"
+
+    # On means smoke detected, Off means no smoke (clear)
+    SMOKE = "smoke"
+
+    # On means sound detected, Off means no sound (clear)
+    SOUND = "sound"
+
+    # On means tampering detected, Off means no tampering (clear)
+    TAMPER = "tamper"
+
+    # On means update available, Off means up-to-date
+    UPDATE = "update"
+
+    # On means vibration detected, Off means no vibration
+    VIBRATION = "vibration"
+
+    # On means open, Off means closed
+    WINDOW = "window"
+
+
+DEVICE_CLASSES_SCHEMA = vol.All(vol.Lower, vol.Coerce(BinarySensorDeviceClass))
+
+# DEVICE_CLASS* below are deprecated as of 2021.12
+# use the BinarySensorDeviceClass enum instead.
+DEVICE_CLASSES = [cls.value for cls in BinarySensorDeviceClass]
+DEVICE_CLASS_BATTERY = BinarySensorDeviceClass.BATTERY.value
+DEVICE_CLASS_BATTERY_CHARGING = BinarySensorDeviceClass.BATTERY_CHARGING.value
+DEVICE_CLASS_CO = BinarySensorDeviceClass.CO.value
+DEVICE_CLASS_COLD = BinarySensorDeviceClass.COLD.value
+DEVICE_CLASS_CONNECTIVITY = BinarySensorDeviceClass.CONNECTIVITY.value
+DEVICE_CLASS_DOOR = BinarySensorDeviceClass.DOOR.value
+DEVICE_CLASS_GARAGE_DOOR = BinarySensorDeviceClass.GARAGE_DOOR.value
+DEVICE_CLASS_GAS = BinarySensorDeviceClass.GAS.value
+DEVICE_CLASS_HEAT = BinarySensorDeviceClass.HEAT.value
+DEVICE_CLASS_LIGHT = BinarySensorDeviceClass.LIGHT.value
+DEVICE_CLASS_LOCK = BinarySensorDeviceClass.LOCK.value
+DEVICE_CLASS_MOISTURE = BinarySensorDeviceClass.MOISTURE.value
+DEVICE_CLASS_MOTION = BinarySensorDeviceClass.MOTION.value
+DEVICE_CLASS_MOVING = BinarySensorDeviceClass.MOVING.value
+DEVICE_CLASS_OCCUPANCY = BinarySensorDeviceClass.OCCUPANCY.value
+DEVICE_CLASS_OPENING = BinarySensorDeviceClass.OPENING.value
+DEVICE_CLASS_PLUG = BinarySensorDeviceClass.PLUG.value
+DEVICE_CLASS_POWER = BinarySensorDeviceClass.POWER.value
+DEVICE_CLASS_PRESENCE = BinarySensorDeviceClass.PRESENCE.value
+DEVICE_CLASS_PROBLEM = BinarySensorDeviceClass.PROBLEM.value
+DEVICE_CLASS_RUNNING = BinarySensorDeviceClass.RUNNING.value
+DEVICE_CLASS_SAFETY = BinarySensorDeviceClass.SAFETY.value
+DEVICE_CLASS_SMOKE = BinarySensorDeviceClass.SMOKE.value
+DEVICE_CLASS_SOUND = BinarySensorDeviceClass.SOUND.value
+DEVICE_CLASS_TAMPER = BinarySensorDeviceClass.TAMPER.value
+DEVICE_CLASS_UPDATE = BinarySensorDeviceClass.UPDATE.value
+DEVICE_CLASS_VIBRATION = BinarySensorDeviceClass.VIBRATION.value
+DEVICE_CLASS_WINDOW = BinarySensorDeviceClass.WINDOW.value
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Track states and offer events for binary sensors."""
-    component = EntityComponent(
-        logging.getLogger(__name__), DOMAIN, hass, SCAN_INTERVAL)
+    component = hass.data[DOMAIN] = EntityComponent(
+        logging.getLogger(__name__), DOMAIN, hass, SCAN_INTERVAL
+    )
 
-    yield from component.async_setup(config)
+    await component.async_setup(config)
     return True
 
 
-# pylint: disable=no-self-use
-class BinarySensorDevice(Entity):
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up a config entry."""
+    component: EntityComponent = hass.data[DOMAIN]
+    return await component.async_setup_entry(entry)
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    component: EntityComponent = hass.data[DOMAIN]
+    return await component.async_unload_entry(entry)
+
+
+@dataclass
+class BinarySensorEntityDescription(EntityDescription):
+    """A class that describes binary sensor entities."""
+
+    device_class: BinarySensorDeviceClass | str | None = None
+
+
+class BinarySensorEntity(Entity):
     """Represent a binary sensor."""
 
+    entity_description: BinarySensorEntityDescription
+    _attr_device_class: BinarySensorDeviceClass | str | None
+    _attr_is_on: bool | None = None
+    _attr_state: None = None
+
     @property
-    def is_on(self):
-        """Return True if the binary sensor is on."""
+    def device_class(self) -> BinarySensorDeviceClass | str | None:
+        """Return the class of this entity."""
+        if hasattr(self, "_attr_device_class"):
+            return self._attr_device_class
+        if hasattr(self, "entity_description"):
+            return self.entity_description.device_class
         return None
 
     @property
-    def state(self):
+    def is_on(self) -> bool | None:
+        """Return true if the binary sensor is on."""
+        return self._attr_is_on
+
+    @final
+    @property
+    def state(self) -> Literal["on", "off"] | None:
         """Return the state of the binary sensor."""
-        return STATE_ON if self.is_on else STATE_OFF
-
-    @property
-    def sensor_class(self):
-        """Return the class of this sensor, from SENSOR_CLASSES."""
-        return None
-
-    @property
-    def state_attributes(self):
-        """Return device specific state attributes."""
-        attr = {}
-
-        if self.sensor_class is not None:
-            attr['sensor_class'] = self.sensor_class
-
-        return attr
+        if (is_on := self.is_on) is None:
+            return None
+        return STATE_ON if is_on else STATE_OFF
